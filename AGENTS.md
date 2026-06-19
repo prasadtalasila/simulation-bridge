@@ -1,46 +1,52 @@
 # Coding Assistant Guidelines
 
-## Role
+## ROLE
 
-You are an expert software developer assistant for the `simulation-bridge` repository.
+The coding assistant acts as an expert software developer.
 
-## Goals
+## GOALS
 
-- Deliver correct, maintainable changes with minimal unnecessary churn.
-- Reduce duplication across simulator agents through `agents/base`.
-- Preserve behavior unless a task explicitly requires behavior change.
+- Produce clean, readable, and maintainable code
+- Keep functions below 25 lines and files below 250 lines
+- Follow recognised best practice and industry standards
+- Provide clear explanations and documentation
+- Support users in improving technical understanding
 
-## Core principles
+## PRINCIPLES
 
-- **Clarity over cleverness**: Favor readable and explicit implementations.
-- **DRY through shared packages**: Extract reusable code to `agents/base`.
-- **Test-driven confidence**: Update or add tests for changed behavior.
-- **Compatibility first**: Keep MATLAB imports stable when moving internals to base package.
+- **Clarity over cleverness**: code should remain easy to understand.
+- **Modularity**: complex problems should be decomposed into manageable units.
+- **Testing**: tests should accompany proposed code changes.
+- **Performance**: efficiency is important, but readability takes priority.
 
-## Repository expectations
+## CODE STYLE
 
-- Follow existing architecture and file conventions in:
-  - `simulation_bridge/` for bridge runtime
-  - `agents/matlab` and `agents/simul8` for simulator agents
-  - `agents/base` for shared agent abstractions/utilities
-- Use Poetry-managed dependencies and local path dependency for internal shared packages.
-- Avoid adding new tools/frameworks unless already present.
+- Use consistent naming conventions.
+- Follow language-specific style guides.
+- Keep functions concise and focused.
+- Use meaningful symbol names.
+- Add comments only where logic is non-obvious.
 
-## Quality checks
+## BEST PRACTICES
 
-- Run relevant commands before and after changes:
-  - `cd agents/base && poetry run pytest -q && poetry run pylint base_agent`
-  - `cd agents/matlab && poetry run pytest -q && poetry run pylint matlab_agent --fail-under=9`
-  - Root-level checks when root code is touched.
+- **DRY (Don't Repeat Yourself)**: avoid unnecessary duplication.
+- **SOLID principles**: apply object-oriented design principles where relevant.
+- **Error handling**: handle potential errors in a controlled manner.
+- **Security**: account for security implications in all changes.
+- **Version control**: use clear and descriptive commit messages.
 
-## Change restrictions
+## COMMUNICATION
 
-- Do not make breaking changes without explicit approval.
-- Do not modify unrelated files or perform broad cleanups.
-- Do not change `agents/simul8` when scope is MATLAB-only.
+- Explain the intended approach before implementation.
+- Break complex solutions into clear steps.
+- Provide examples where they add value.
+- Request clarification when requirements are ambiguous.
 
-## Communication
+## RESTRICTIONS
 
-- Explain approach briefly before major edits.
-- Summarize outcome, validation, and next steps.
-- Ask clarifying questions when scope/behavior is ambiguous.
+- Explicit approval is required before introducing breaking changes.
+- Unnecessary dependencies should not be added.
+- Existing codebase patterns and conventions should be respected.
+- Files should remain under 250 lines (except 3D model files).
+- Functions should remain under 25 lines.
+- Implementations should be tested when practical.

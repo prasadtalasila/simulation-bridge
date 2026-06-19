@@ -1,111 +1,159 @@
-# Copilot Instructions for `simulation-bridge`
+# GitHub Copilot Instructions for simulation-bridge
 
-## Build, test, lint, and package commands
+## Project Overview
 
-### Root package (`simulation_bridge/`)
+This repository contains a Python-based distributed simulation middleware and simulator agents:
 
-Run from repository root:
+- `simulation_bridge/`: protocol-bridging runtime (REST, MQTT, RabbitMQ, in-memory API)
+- `agents/matlab/`: MATLAB simulation agent (batch/streaming/interactive)
+- `agents/simul8/`: SIMUL8 simulation agent (batch, Windows/COM focused)
+- `performance/`: analysis utilities for generated bridge performance metrics
+
+The system uses RabbitMQ as the common routing backbone between bridge and agents.
+
+## Repository Structure
+
+```text
+simulation-bridge/
+├── simulation_bridge/            # bridge package
+│   ├── src/core/                 # orchestrator, core routing, infra setup
+│   ├── src/protocol_adapters/    # rest/mqtt/rabbitmq/inmemory adapters
+│   ├── src/utils/                # config, logging, signals, perf, certs
+│   ├── config/                   # default config templates
+│   └── test/                     # unit/integration tests
+├── agents/
+│   ├── base/                     # shared agent foundation (path dep, not published)
+│   ├── matlab/                   # MATLAB agent package + tests/resources
+│   ├── python/                   # Python/generic CLI agent package + tests
+│   └── simul8/                   # SIMUL8 agent package + tests/resources
+├── performance/                  # overhead analysis scripts
+└── .github/workflows/            # per-component CI pipelines
+```
+
+## Core Engineering Expectations
+
+- Preserve message contract compatibility (`simulation` payloads, routing keys, response fields).
+- Keep protocol adapters thin and put routing/business logic in core components.
+- Prefer config-driven behavior over hardcoded values.
+- Keep error handling explicit (publish structured errors instead of silent drops).
+- Maintain existing logging and performance instrumentation patterns.
+
+## Python Style and Tooling
+
+- Python packaging is Poetry-based for root and each agent.
+- Existing style signals in repo:
+  - `.pep8`: max line length 80
+  - `pylintrc`: enforced in CI (`--fail-under=9` in workflows)
+- Existing tests are pytest-based and already organized per component.
+
+## How to Work in Each Area
+
+### `simulation_bridge/`
+
+- `BridgeOrchestrator` handles lifecycle, adapter loading, and signal wiring.
+- `BridgeCore` is the central request/result router.
+- Protocol wiring is defined in `src/protocol_adapters/*.json`; keep adapter class paths and signal names consistent.
+- REST adapter includes JWT verification and NDJSON streaming behavior; preserve those contracts.
+
+### `agents/base/`
+
+- Shared foundation package consumed by all agents via `base-agent = { path = "../base", develop = true }`.
+- Not published to PyPI; it is a local path dependency only.
+- Provides: `Connect`, `RabbitMQManager`, `BaseConfigManager`, `BasePerformanceMonitor`, `BaseSimulationData`, `initialize_agent_runtime`, `run_agent_loop`, `create_response`, `setup_logger`.
+- When adding shared utilities here, run the base agent test suite (`cd agents/base && poetry run pytest`) before touching agent packages.
+- Agents subclass `BaseSimulationData`, `BaseConfigManager`, and `BasePerformanceMonitor`; add agent-specific fields/methods there.
+
+### `agents/matlab/`
+
+- `MessageHandler` is the dispatch point by `simulation.type`.
+- Batch mode uses MATLAB Engine; streaming/interactive use MATLAB subprocess + TCP wrappers.
+- Keep response formatting centralized through `create_response`.
+- Interactive mode depends on `inputs.stream_source` and `ex.input.stream` routing.
+- MATLAB-local module paths are kept as compatibility re-exports (`src/comm/connect.py`, `src/utils/logger.py`, etc.) backed by `base_agent`.
+
+### `agents/python/`
+
+- Batch-only CLI executor; maps `simulation.inputs` key/value pairs to `--key value` arguments.
+- **Security**: two-layer path containment (Pydantic `field_validator` + `Path.resolve()` + `is_relative_to()`); timeout clamped to `MAX_TIMEOUT = 3600`.
+- `PythonSimulationInputs` overrides `SimulationInputs` to exclude `stream_source` so MATLAB streaming fields do not appear in CLI commands.
+- Target scripts must print JSON to stdout for output extraction.
+
+### `agents/simul8/`
+
+- Windows-specific COM automation (`win32com`, `pythoncom`) is core to runtime behavior.
+- Avoid Linux-only assumptions in SIMUL8 code paths.
+- Preserve CSV input/output contract used by SIMUL8 Visual Logic files.
+
+## Testing and Validation Commands
+
+Use the existing commands already encoded in repo docs/workflows.
+
+### Root (`simulation_bridge`)
 
 ```bash
 poetry install --with dev
-poetry run autopep8 --recursive --diff simulation_bridge
-poetry run autopep8 --in-place --aggressive --recursive simulation_bridge
 poetry run pylint simulation_bridge --fail-under=9
 poetry run pytest
-poetry run pytest simulation_bridge/test/unit/test_bridge_core.py
-poetry run pytest simulation_bridge/test/unit/test_bridge_core.py::TestHandleInputMessage::test_handle_input_message_valid
-poetry run pytest simulation_bridge/test/integration/
-poetry build --format wheel
-poetry build --format sdist
 ```
 
-Key CI reference: `.github/workflows/simulation-bridge-ci.yml`.
-
-### MATLAB agent (`agents/matlab`)
-
-Run from `agents/matlab`:
+### MATLAB agent
 
 ```bash
+cd agents/matlab
 poetry install --with dev
-poetry run autopep8 --recursive --diff matlab_agent
-poetry run autopep8 --in-place --aggressive --recursive matlab_agent
 poetry run pylint matlab_agent --fail-under=9
 poetry run pytest
-poetry run pytest matlab_agent/test/unit/test_main.py
-poetry run pytest matlab_agent/test/unit/test_batch.py::TestBatchSimulationUtils::test_valid_data
-poetry build --format wheel
-poetry build --format sdist
 ```
 
-Key CI reference: `.github/workflows/matlab-agent-ci.yml`.
-
-### Simul8 agent (`agents/simul8`)
-
-Run from `agents/simul8`:
+### Base agent
 
 ```bash
+cd agents/base
 poetry install --with dev
-poetry run autopep8 --recursive --diff simul8_agent
-poetry run autopep8 --in-place --aggressive --recursive simul8_agent
-poetry run pylint simul8_agent --fail-under=9
-poetry run pytest
-poetry run pytest simul8_agent/tests/unit/test_main.py
-poetry run pytest simul8_agent/tests/unit/test_batch.py::TestBatchSimulationUtils::test_valid_data
-poetry build --format wheel
-poetry build --format sdist
+poetry run pylint base_agent
+poetry run pytest -q
+poetry build
 ```
 
-Key CI reference: `.github/workflows/simul8-agent-ci.yml`.
+### Python agent
 
----
+```bash
+cd agents/python
+poetry install --with dev
+poetry run pylint python_agent --fail-under=9
+poetry run pytest -q
+poetry build
+```
 
-## High-level architecture (big picture)
+### MATLAB agent
 
-The repository is a message-driven bridge plus simulator-specific agents:
+```bash
+cd agents/matlab
+poetry install --with dev
+poetry run pylint matlab_agent --fail-under=9
+poetry run pytest
+poetry build
+```
 
-- **Bridge runtime**: `simulation_bridge/src/main.py` starts `BridgeOrchestrator`, which loads config, ensures TLS certs, sets up RabbitMQ infrastructure, instantiates enabled adapters, wires signals, and supervises adapter health.
-- **Core routing**: `simulation_bridge/src/core/bridge_core.py` validates incoming simulation payloads (Pydantic), publishes requests to RabbitMQ (`ex.bridge.output`), handles simulator results from RabbitMQ, and republishes results (`ex.bridge.result`) with protocol metadata.
-- **Infrastructure bootstrap**: `simulation_bridge/src/core/bridge_infrastructure.py` declares exchanges/queues/bindings from YAML config.
-- **Protocol adapters**: `simulation_bridge/src/protocol_adapters/` implements RabbitMQ, MQTT, REST, and InMemory adapters behind the common abstract `ProtocolAdapter`.
-- **Signal bus**: `simulation_bridge/src/utils/signal_manager.py` maps events to handlers using Blinker; mappings come from JSON config (`adapters_signal.json` vs `inmemory_signal.json`).
-- **Simulator agents**: `agents/matlab` and `agents/simul8` are independent Poetry projects that consume bridge commands from RabbitMQ and publish results back.
+### SIMUL8 agent
 
-Primary flow (normal mode): client protocol adapter -> signal -> `BridgeCore.handle_input_message` -> RabbitMQ exchange/route -> simulator agent queue -> simulator execution -> result exchange -> bridge -> fan-out to REST/MQTT/RabbitMQ/in-memory destination.
+```bash
+cd agents/simul8
+poetry install --with dev
+poetry run pylint simul8_agent --fail-under=9
+poetry run pytest
+```
 
-Primary flow (in-memory mode): `simulation_bridge.SimulationBridge` uses in-process callbacks while still routing through `BridgeCore` logic.
+## Configuration and Security Notes
 
----
+- Keep secrets out of committed YAML files; use env substitution patterns where available.
+- Preserve TLS toggles and certificate handling logic in bridge and clients.
+- Do not weaken JWT checks in REST adapter.
+- Keep RabbitMQ durability and ack/nack semantics intact unless explicitly redesigning them.
 
-## Key repository conventions
+## When Generating or Refactoring Code
 
-### Message schema and routing conventions
-
-- Request payloads use top-level `simulation` with fields such as `request_id`, `client_id`, `simulator`, `type`, `file`, `inputs`, `outputs` (see `simulation_bridge/resources/simulation.yaml.template`).
-- Bridge writes protocol provenance to `simulation.bridge_meta.protocol`; downstream result fan-out relies on this metadata.
-- Bridge RabbitMQ routing key for input publish is `"{producer}.{consumer}"`.
-- Agent queues are named `Q.sim.<agent_id>` and are bound to input exchange with `*.{agent_id}` (e.g., MATLAB/Simul8 managers).
-- Agent result payloads include `source` and `destinations` and are sent to `ex.sim.result`.
-
-### Signal-driven dispatch is config-backed
-
-- Signal bindings are not hardcoded in one place; they are loaded from JSON (`adapters_signal.json` / `inmemory_signal.json`) and connected dynamically.
-- `simulation_bridge.in_memory_mode` changes which signal map is loaded (`load_protocol_config`), so behavior depends on config, not just code path.
-
-### Configuration behavior to preserve
-
-- Runtime config is validated by nested Pydantic models in `utils/config_manager.py`.
-- YAML supports environment substitution in string values with `${VAR}` and `${VAR:default}` (`utils/config_loader.py`).
-- If config load/validation fails, `ConfigManager` falls back to internal defaults; avoid assuming missing config is fatal.
-
-### Security and transport conventions
-
-- TLS enablement is per protocol (`rabbitmq.tls`, `mqtt.tls`, REST cert/key fields), and bridge startup auto-generates certs when needed (`utils/certs.py`).
-- REST adapter expects JWT Bearer tokens, validates header/algorithm/claims, and enforces token age (`rest/rest_adapter.py`).
-
-### Test layout is intentionally inconsistent across packages
-
-- Root tests live under `simulation_bridge/test/...`.
-- MATLAB agent tests use singular `test/` directory.
-- Simul8 agent tests use plural `tests/` directory.
-
-Use package-local `pytest.ini` and working directory when running agent tests to avoid path/coverage confusion.
+- Reuse existing utilities (`ConfigManager`, `PerformanceMonitor`, `create_response`, logger helpers).
+- Follow current folder conventions (`src/core`, `src/comm`, `src/utils`, `test/unit`, `test/integration`).
+- Add or update tests in the same component whenever behavior changes.
+- Keep changes component-scoped (bridge vs MATLAB agent vs SIMUL8 agent) unless cross-component contract changes are required.

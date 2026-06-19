@@ -1,38 +1,96 @@
 # CLAUDE.md
 
-Repository-level behavioral guidelines for coding assistants working on `simulation-bridge`.
+Behavioural guidelines to reduce common LLM coding errors. These guidelines
+should be combined with project-specific instructions where applicable.
 
-## 1) Think before coding
+**Trade-off:** These guidelines prioritise caution over speed.
+For trivial tasks, use judgment.
 
-- State key assumptions when requirements are ambiguous.
-- Prefer explicit tradeoffs over silent choices.
-- If something is unclear and blocks correctness, ask before implementing.
+## 1. Think Before Coding
 
-## 2) Keep solutions simple and scoped
+**Assumptions should be explicit. Ambiguity should be surfaced. Trade-offs
+should be stated.**
 
-- Implement only what is requested; avoid speculative features.
-- Prefer minimal abstractions unless reuse is clear and immediate.
-- Keep diffs focused: each changed line should map to the task.
+Before implementing:
 
-## 3) Make surgical changes
+- State assumptions explicitly.
+- Where multiple interpretations exist, present alternatives rather than making
+  silent choices.
+- Prefer simpler approaches when appropriate.
+- Pause and request clarification when requirements are unclear.
 
-- Follow existing patterns, naming, and module layout.
-- Do not refactor unrelated code while implementing a feature/fix.
-- Remove only dead code introduced by your own edits.
+## 2. Simplicity First
 
-## 4) Verify outcomes
+**Write only the minimum code that solves the stated problem. Avoid
+speculative design.**
 
-- Define concrete success criteria before editing.
-- Run existing tests/lint for touched areas (root and agent packages when relevant).
-- Prefer failing test reproduction before bug fixes where practical.
+- Do not add features beyond scope.
+- Avoid abstractions for one-off code.
+- Do not introduce unrequested configurability.
+- Avoid defensive handling for impossible scenarios.
+- If a shorter implementation can provide equivalent clarity and correctness,
+  prefer the shorter version.
 
-## 5) Agent-specific conventions
+Ask: "Would a senior engineer regard this as over-engineered?"
+If yes, simplify.
 
-- Shared agent code belongs in `agents/base` and is consumed via Poetry path dependency.
-- Do not change `agents/simul8` when task explicitly asks to update MATLAB only.
-- Preserve MATLAB public import paths with compatibility wrappers when extracting shared code.
+## 3. Surgical Changes
 
-## 6) Communication quality
+**Change only what is required. Clean up only what is introduced by the
+change.**
+
+When editing existing code:
+
+- Do not refactor unrelated code.
+- Match the existing local style.
+- If unrelated dead code is observed, report it without removing it.
+
+When your changes create orphans:
+
+- Remove imports, variables, and functions made unused by the current change.
+- Do not remove pre-existing dead code unless explicitly requested.
+
+Validation rule: each changed line should trace directly to the requested task.
+
+## 4. Goal-Driven Execution
+
+**Define success criteria and iterate until verified.**
+
+Transform tasks into verifiable goals:
+
+- "Add validation" -> "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" -> "Write a test that reproduces it, then make it pass"
+- "Refactor X" -> "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+
+```text
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently.
+Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are effective when:**
+
+- diffs contain fewer unnecessary changes;
+- rewrites due to over-complexity are reduced;
+- clarification occurs before implementation rather than after defects appear.
+
+---
+
+## 5. Agent-Specific Conventions (`simulation-bridge`)
+
+- Shared agent code belongs in `agents/base` and is consumed via Poetry path dependency (`develop = true`).
+- Do not change `agents/simul8` when a task explicitly asks to update MATLAB only.
+- Preserve MATLAB public import paths with compatibility re-export wrappers when extracting shared code.
+- Run tests with `poetry run pytest` (not `python -m pytest`) from the agent directory to match CI.
+
+## 6. Communication Quality
 
 - Briefly explain approach, then implement.
 - Report what changed, why, and how it was validated.
