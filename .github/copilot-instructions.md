@@ -22,7 +22,9 @@ simulation-bridge/
 │   ├── config/                   # default config templates
 │   └── test/                     # unit/integration tests
 ├── agents/
+│   ├── base/                     # shared agent foundation (path dep, not published)
 │   ├── matlab/                   # MATLAB agent package + tests/resources
+│   ├── python/                   # Python/generic CLI agent package + tests
 │   └── simul8/                   # SIMUL8 agent package + tests/resources
 ├── performance/                  # overhead analysis scripts
 └── .github/workflows/            # per-component CI pipelines
@@ -53,12 +55,28 @@ simulation-bridge/
 - Protocol wiring is defined in `src/protocol_adapters/*.json`; keep adapter class paths and signal names consistent.
 - REST adapter includes JWT verification and NDJSON streaming behavior; preserve those contracts.
 
+### `agents/base/`
+
+- Shared foundation package consumed by all agents via `base-agent = { path = "../base", develop = true }`.
+- Not published to PyPI; it is a local path dependency only.
+- Provides: `Connect`, `RabbitMQManager`, `BaseConfigManager`, `BasePerformanceMonitor`, `BaseSimulationData`, `initialize_agent_runtime`, `run_agent_loop`, `create_response`, `setup_logger`.
+- When adding shared utilities here, run the base agent test suite (`cd agents/base && poetry run pytest`) before touching agent packages.
+- Agents subclass `BaseSimulationData`, `BaseConfigManager`, and `BasePerformanceMonitor`; add agent-specific fields/methods there.
+
 ### `agents/matlab/`
 
 - `MessageHandler` is the dispatch point by `simulation.type`.
 - Batch mode uses MATLAB Engine; streaming/interactive use MATLAB subprocess + TCP wrappers.
 - Keep response formatting centralized through `create_response`.
 - Interactive mode depends on `inputs.stream_source` and `ex.input.stream` routing.
+- MATLAB-local module paths are kept as compatibility re-exports (`src/comm/connect.py`, `src/utils/logger.py`, etc.) backed by `base_agent`.
+
+### `agents/python/`
+
+- Batch-only CLI executor; maps `simulation.inputs` key/value pairs to `--key value` arguments.
+- **Security**: two-layer path containment (Pydantic `field_validator` + `Path.resolve()` + `is_relative_to()`); timeout clamped to `MAX_TIMEOUT = 3600`.
+- `PythonSimulationInputs` overrides `SimulationInputs` to exclude `stream_source` so MATLAB streaming fields do not appear in CLI commands.
+- Target scripts must print JSON to stdout for output extraction.
 
 ### `agents/simul8/`
 
@@ -85,6 +103,36 @@ cd agents/matlab
 poetry install --with dev
 poetry run pylint matlab_agent --fail-under=9
 poetry run pytest
+```
+
+### Base agent
+
+```bash
+cd agents/base
+poetry install --with dev
+poetry run pylint base_agent
+poetry run pytest -q
+poetry build
+```
+
+### Python agent
+
+```bash
+cd agents/python
+poetry install --with dev
+poetry run pylint python_agent --fail-under=9
+poetry run pytest -q
+poetry build
+```
+
+### MATLAB agent
+
+```bash
+cd agents/matlab
+poetry install --with dev
+poetry run pylint matlab_agent --fail-under=9
+poetry run pytest
+poetry build
 ```
 
 ### SIMUL8 agent

@@ -80,3 +80,18 @@ Weak criteria ("make it work") require constant clarification.
 - diffs contain fewer unnecessary changes;
 - rewrites due to over-complexity are reduced;
 - clarification occurs before implementation rather than after defects appear.
+
+---
+
+## 5. Agent-Specific Conventions (`simulation-bridge`)
+
+- Shared agent code belongs in `agents/base` and is consumed via Poetry path dependency (`develop = true`).
+- Do not change `agents/simul8` when a task explicitly asks to update MATLAB only.
+- Preserve MATLAB public import paths with compatibility re-export wrappers when extracting shared code.
+- Run tests with `poetry run pytest` (not `python -m pytest`) from the agent directory to match CI.
+
+## 6. Communication Quality
+
+- Briefly explain approach, then implement.
+- Report what changed, why, and how it was validated.
+- Call out remaining risks or follow-ups explicitly.

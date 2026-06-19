@@ -15,9 +15,12 @@ class IMessageBroker(ABC):
     """
 
     @abstractmethod
-    def connect(self) -> None:
+    def connect(self) -> bool:
         """
         Establish a connection to the message broker.
+
+        Returns:
+            bool: True if connected successfully, False otherwise.
         """
 
     @abstractmethod
