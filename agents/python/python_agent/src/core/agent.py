@@ -1,108 +1,113 @@
-"""
-PythonAgent implementation - An implementation of the PythonAgent class using the Connect
-abstraction to manage communication and handle simulation processing.
-"""
+"""PythonAgent implementation using shared base_agent runtime utilities."""
 
 from typing import Any, Dict, Optional
 
-from ..interfaces.config_manager import IConfigManager
-from ..utils.config_manager import ConfigManager
-from ..utils.logger import get_logger
-from ..utils.performance_monitor import PerformanceMonitor
-from ..comm.connect import Connect
+import pika
+import yaml
+from base_agent.comm.connect import Connect
+from base_agent.comm.rabbitmq.rabbitmq_manager import RabbitMQManager
+from base_agent.interfaces.config_manager import IConfigManager
+from base_agent.utils.logger import get_logger
+from base_agent.utils.agent_runtime import (
+    initialize_agent_runtime,
+    run_agent_loop,
+    send_result_with_monitor,
+    shutdown_agent_runtime,
+)
 
-# Configure logger
-logger = get_logger()
+from ..comm.rabbitmq.message_handler import MessageHandler
+from ..utils.config_manager import ConfigManager
+from ..utils.performance_monitor import PerformanceMonitor
+
+logger = get_logger("PYTHON-AGENT")
 
 
 class PythonAgent:
     """
-    An agent that interfaces with a Python script simulation through a communication layer.
-    This component handles message reception, processing, and result distribution
-    while remaining decoupled from the specific messaging technology.
+    Agent that executes Python scripts/programs via RabbitMQ-driven CLI requests.
     """
 
     def __init__(
-            self,
-            agent_id: str,
-            config_path: Optional[str] = None,
-            broker_type: str = "rabbitmq") -> None:
-        """
-        Initialize the Python agent.
-
-        Args:
-            agent_id (str): The ID of the agent
-            config_path (Optional[str]): Path to the configuration file (optional)
-            broker_type (str): The type of message broker to use (default: "rabbitmq")
-        """
+        self,
+        agent_id: str,
+        config_path: Optional[str] = None,
+        broker_type: str = "rabbitmq",
+    ) -> None:
         self.agent_id: str = agent_id
-        logger.info("Initializing Python agent with ID: %s", self.agent_id)
 
-        # Load configuration
-        self.config_manager: IConfigManager = ConfigManager(config_path)
-        self.config: Dict[str, Any] = self.config_manager.get_config()
+        def broker_factory(
+            current_agent_id: str,
+            current_config: Dict[str, Any],
+        ) -> RabbitMQManager:
+            return RabbitMQManager(
+                agent_id=current_agent_id,
+                config=current_config,
+                logger=logger,
+                pika_module=pika,
+                yaml_module=yaml,
+            )
 
-        # Initialize performance monitor
-        self.performance_monitor = PerformanceMonitor(config=self.config)
-        # Initialize the communication layer
-        self.comm = Connect(self.agent_id, self.config, broker_type)
-        # Set up the communication infrastructure
-        self.comm.connect()
-        self.comm.setup()
-        self.comm.register_message_handler()
-        logger.debug("Python agent initialized successfully")
+        def connect_factory(
+            current_agent_id: str,
+            current_config: Dict[str, Any],
+            current_broker_type: str,
+        ) -> Connect:
+            return Connect(
+                agent_id=current_agent_id,
+                config=current_config,
+                broker_type=current_broker_type,
+                broker_factory=broker_factory,
+                message_handler_factory=MessageHandler,
+                logger=logger,
+            )
+
+        try:
+            runtime = initialize_agent_runtime(
+                agent_name="PYTHON",
+                agent_id=self.agent_id,
+                config_path=config_path,
+                broker_type=broker_type,
+                config_manager_factory=ConfigManager,
+                performance_monitor_factory=PerformanceMonitor,
+                connect_factory=connect_factory,
+                logger=logger,
+            )
+        except ConnectionError as error:
+            logger.error("Connection error while initializing Python agent: %s", error)
+            raise
+
+        self.config_manager: IConfigManager = runtime.config_manager
+        self.config: Dict[str, Any] = runtime.config
+        self.performance_monitor = runtime.performance_monitor
+        self.comm = runtime.comm
 
     def start(self) -> None:
-        """
-        Start the agent and begin consuming messages.
-        """
-        try:
-            logger.info("Python agent running and listening for requests")
-            self.comm.start_consuming()
-        except KeyboardInterrupt:
-            logger.info("Stopping Python agent due to keyboard interrupt")
-            self.stop()
-        except ConnectionError as e:
-            # Specific handling for ConnectionError
-            logger.error("Connection error while consuming messages: %s", e)
-            self.stop()
-        except TimeoutError as e:
-            # Specific handling for TimeoutError
-            logger.error("Timeout error while consuming messages: %s", e)
-            self.stop()
-        except Exception as e:
-            # For all other unexpected errors
-            logger.error("Unexpected error while consuming messages: %s", e)
-            # This will log the full stack trace
-            logger.exception("Stack trace:")
-            self.stop()
+        """Start the agent and begin consuming messages."""
+        run_agent_loop(
+            agent_name="PYTHON",
+            comm=self.comm,
+            logger=logger,
+            stop_func=self.stop,
+        )
 
     def stop(self) -> None:
-        """
-        Stop the agent and close all connections.
-        """
-        logger.info("Stopping Python agent")
-        self.comm.close()
-
-        # Log performance summary before stopping
-        summary = self.performance_monitor.get_summary()
-        if summary:
-            logger.info("Performance Summary:")
-            for metric, value in summary.items():
-                logger.info("  %s: %.2f", metric, value)
+        """Stop the agent and close all connections."""
+        shutdown_agent_runtime(
+            agent_name="PYTHON",
+            comm=self.comm,
+            performance_monitor=self.performance_monitor,
+            logger=logger,
+        )
 
     def send_result(self, destination: str, result: Dict[str, Any]) -> bool:
-        """
-        Send operation results to the specified destination.
+        """Send operation results to the specified destination."""
+        return send_result_with_monitor(
+            comm=self.comm,
+            performance_monitor=self.performance_monitor,
+            destination=destination,
+            result=result,
+        )
 
-        Args:
-            destination (str): The destination identifier
-            result (Dict[str, Any]): The result data to be sent
-
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        success = self.comm.send_result(destination, result)
-        if success:
-            self.performance_monitor.record_result_sent()
-        return success
+    def get_config(self) -> Dict[str, Any]:
+        """Retrieve the agent's current configuration."""
+        return self.config

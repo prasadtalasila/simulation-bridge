@@ -3,7 +3,7 @@
 from pathlib import Path
 from unittest.mock import Mock
 
-from src.core.batch import handle_batch_simulation
+from python_agent.src.core.batch import handle_batch_simulation
 
 
 def test_handle_batch_simulation_sends_success(tmp_path: Path):

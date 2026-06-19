@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from src.core.python_simulator import PythonSimulator
+from python_agent.src.core.python_simulator import PythonSimulator
 
 
 def test_run_python_script_with_cli_params(tmp_path: Path):

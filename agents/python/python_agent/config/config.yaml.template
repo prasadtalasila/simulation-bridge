@@ -4,15 +4,15 @@ agent:
 
 rabbitmq:
   host: localhost
-  port: 5672
-  username: guest
-  password: guest
+  port: 5671
+  username: ${RABBITMQ_USERNAME:guest}
+  password: ${RABBITMQ_PASSWORD:guest}
   heartbeat: 600
   vhost: /
-  tls: false
+  tls: true
 
 simulation:
-  path: /Users/foo/simulation-bridge/agents/python/python_agent/docs/examples
+  path: ${SIMULATION_PATH:.}
 
 exchanges:
   input: ex.bridge.output # Exchange to receive commands from

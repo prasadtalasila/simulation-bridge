@@ -1,6 +1,7 @@
 """Shared configuration loader utilities for simulation agents."""
 
 import os
+import re
 from importlib import resources
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Union
@@ -88,23 +89,21 @@ def load_config(
 def substitute_env_vars(
     config: Union[Dict[str, Any], list, str]
 ) -> Union[Dict[str, Any], list, str]:
-    """Recursively substitute ${ENV} and ${ENV:default} placeholders."""
+    """Recursively substitute all ${ENV} and ${ENV:default} placeholders."""
     if isinstance(config, dict):
         return {key: substitute_env_vars(value)
                 for key, value in config.items()}
     if isinstance(config, list):
         return [substitute_env_vars(item) for item in config]
-    if isinstance(config, str) and "${" in config and "}" in config:
-        start_idx = config.find("${")
-        end_idx = config.find("}", start_idx)
-        if start_idx != -1 and end_idx != -1:
-            env_var = config[start_idx + 2:end_idx]
+    if isinstance(config, str) and "${" in config:
+        def _replace(match: re.Match) -> str:
+            env_var = match.group(1)
             if ":" in env_var:
                 env_name, default = env_var.split(":", 1)
             else:
                 env_name, default = env_var, ""
-            env_value = os.environ.get(env_name, default)
-            return config[:start_idx] + env_value + config[end_idx + 1:]
+            return os.environ.get(env_name, default)
+        return re.sub(r'\$\{([^}]+)\}', _replace, config)
     return config
 
 

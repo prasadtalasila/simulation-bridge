@@ -1,59 +1,64 @@
 """Message handler for processing incoming RabbitMQ messages."""
 
-import uuid
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, ClassVar, Dict, Optional
 
 import yaml
 from pika.adapters.blocking_connection import BlockingChannel
 from pika.spec import Basic, BasicProperties
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from base_agent.comm.rabbitmq.interfaces import IRabbitMQMessageHandler
+from base_agent.comm.rabbitmq.message_models import (
+    BaseMessagePayload,
+    BaseSimulationData,
+    SimulationOutputs,
+)
+from base_agent.comm.rabbitmq.message_processing import (
+    SimulationMessageContext,
+    build_error_response,
+    extract_source_from_routing_key,
+    parse_message_body,
+    validate_message_payload,
+)
+from base_agent.utils.create_response import create_response
+from base_agent.utils.logger import get_logger
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from ...core.batch import handle_batch_simulation
-from ...utils.create_response import create_response
-from ...utils.logger import get_logger
-from .interfaces import IRabbitMQMessageHandler
 
-logger = get_logger()
+logger = get_logger("PYTHON-AGENT")
 
 
-class SimulationInputs(BaseModel):
-    """Model for simulation inputs - dynamic fields allowed."""
+class PythonSimulationInputs(BaseModel):
+    """CLI key/value inputs for the Python agent — no MATLAB streaming fields."""
 
     model_config = ConfigDict(extra="allow")
 
 
-class SimulationOutputs(BaseModel):
-    """Model for simulation outputs - dynamic fields allowed."""
+class SimulationData(BaseSimulationData):
+    """Python-agent simulation data: batch-only with path-safe file validation."""
 
-    model_config = ConfigDict(extra="allow")
+    allowed_simulation_types: ClassVar[tuple[str, ...]] = ("batch",)
+    # Override base inputs to strip MATLAB-specific stream_source from model_dump output
+    inputs: PythonSimulationInputs = PythonSimulationInputs()
+    timeout: Optional[int] = None
 
-
-class SimulationData(BaseModel):
-    """Model for simulation data structure."""
-
-    request_id: str
-    client_id: str
-    simulator: str
-    type: str = Field(default="batch")
-    file: str
-    inputs: SimulationInputs
-    outputs: Optional[SimulationOutputs] = None
-    bridge_meta: Optional[Dict[str, Any]] = None
-
-    @field_validator("type", mode="before")
+    @field_validator("file", mode="before")
     @classmethod
-    def validate_sim_type(cls, value):
-        """Only batch mode is supported by Python Agent."""
-        if value != "batch":
-            raise ValueError(f"Invalid simulation type: {value}. Must be 'batch'")
+    def validate_file_not_traversal(cls, value: str) -> str:
+        """Reject absolute paths and directory traversal in the file field."""
+        p = Path(value)
+        if p.is_absolute():
+            raise ValueError("file must be a relative path")
+        if ".." in p.parts:
+            raise ValueError("file must not contain '..' path traversal")
         return value
 
 
-class MessagePayload(BaseModel):
-    """Model for the entire message payload."""
+class MessagePayload(BaseMessagePayload):
+    """Python-agent top-level message payload model."""
 
     simulation: SimulationData
-    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
 
 class MessageHandler(IRabbitMQMessageHandler):
@@ -69,6 +74,25 @@ class MessageHandler(IRabbitMQMessageHandler):
     def get_agent_id(self) -> str:
         return self.agent_id
 
+    def _send_error_and_nack(
+        self,
+        ch: BlockingChannel,
+        method: Basic.Deliver,
+        source: str,
+        context: SimulationMessageContext,
+        error_payload: Dict[str, Any],
+    ) -> None:
+        error_response = build_error_response(
+            response_builder=create_response,
+            context=context,
+            error=error_payload,
+        )
+        try:
+            self.rabbitmq_manager.send_result(source, error_response)
+        except Exception as send_error:  # pylint: disable=broad-except
+            logger.error("Failed to send error response: %s", send_error)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
     def handle_message(
         self,
         ch: BlockingChannel,
@@ -77,35 +101,70 @@ class MessageHandler(IRabbitMQMessageHandler):
         body: bytes,
     ) -> None:
         message_id = properties.message_id if properties.message_id else "unknown"
-        source = method.routing_key.split(".")[0]
+        source = extract_source_from_routing_key(method.routing_key)
+        msg_dict: Any = {}
 
         try:
-            msg_dict = yaml.safe_load(body)
-            payload = MessagePayload(**msg_dict)
-            sim_data = payload.simulation
+            try:
+                msg_dict = parse_message_body(body, yaml.safe_load, logger)
+            except yaml.YAMLError as parsing_error:
+                logger.error("YAML parsing error: %s", parsing_error)
+                self._send_error_and_nack(
+                    ch=ch,
+                    method=method,
+                    source=source,
+                    context=SimulationMessageContext(),
+                    error_payload={
+                        "message": "YAML parsing error",
+                        "details": str(parsing_error),
+                        "type": "yaml_parse_error",
+                    },
+                )
+                return
 
+            payload, message_context, validation_error = validate_message_payload(
+                msg_dict=msg_dict,
+                payload_factory=lambda payload_data: MessagePayload(**payload_data),
+                logger=logger,
+            )
+            if validation_error:
+                self._send_error_and_nack(
+                    ch=ch,
+                    method=method,
+                    source=source,
+                    context=message_context,
+                    error_payload={
+                        "message": "Message validation failed",
+                        "details": validation_error,
+                        "type": "validation_error",
+                    },
+                )
+                return
+
+            # Pass validated data — not the raw dict — to the batch handler
+            validated_dict = {"simulation": payload.simulation.model_dump()}
             handle_batch_simulation(
-                msg_dict,
+                validated_dict,
                 source,
                 self.rabbitmq_manager,
                 self.path_simulation,
                 self.response_templates,
             )
             ch.basic_ack(delivery_tag=method.delivery_tag)
-            logger.info("Handled batch request %s for file %s", sim_data.request_id, sim_data.file)
+            logger.info(
+                "Handled batch request %s for file %s",
+                message_context.request_id,
+                message_context.sim_file,
+            )
 
-        except Exception as error:  # pylint: disable=broad-except
-            logger.error("Error processing message %s: %s", message_id, error)
-            error_response = create_response(
-                template_type="error",
-                sim_file="",
-                sim_type="batch",
-                response_templates={},
-                bridge_meta="unknown",
-                request_id="unknown",
+        except Exception as processing_error:  # pylint: disable=broad-except
+            logger.error("Error processing message %s: %s", message_id, processing_error)
+            error_response = build_error_response(
+                response_builder=create_response,
+                context=SimulationMessageContext(),
                 error={
                     "message": "Error processing message",
-                    "details": str(error),
+                    "details": str(processing_error),
                     "type": "execution_error",
                 },
             )
@@ -114,3 +173,12 @@ class MessageHandler(IRabbitMQMessageHandler):
             except Exception as send_error:  # pylint: disable=broad-except
                 logger.error("Failed to send error response: %s", send_error)
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+
+
+__all__ = [
+    "PythonSimulationInputs",
+    "SimulationOutputs",
+    "SimulationData",
+    "MessagePayload",
+    "MessageHandler",
+]

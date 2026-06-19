@@ -133,7 +133,8 @@ def run_agent(config_file) -> None:
     )
 
     try:
-        logger.debug("Starting python agent with config: %s", config)
+        redacted = {**config, "rabbitmq": {**config.get("rabbitmq", {}), "password": "***"}}
+        logger.debug("Starting python agent with config: %s", redacted)
         agent.start()
     except KeyboardInterrupt:
         logger.info("Shutting down agent due to keyboard interrupt")
