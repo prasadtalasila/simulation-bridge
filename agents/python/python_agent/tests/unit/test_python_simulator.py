@@ -22,7 +22,7 @@ def test_run_python_script_with_cli_params(tmp_path: Path):
     assert result["exit_code"] == 0
     assert result["outputs"] == {"value": "42"}
     assert result["stderr"] == ""
-    assert result["command"][0].endswith("python") or result["command"][0].endswith("python3")
+    assert "python" in result["command"][0].lower()  # handles python, python3, python.exe
 
 
 def test_run_non_zero_exit_raises(tmp_path: Path):

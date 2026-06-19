@@ -48,7 +48,9 @@ class SimulationData(BaseSimulationData):
     def validate_file_not_traversal(cls, value: str) -> str:
         """Reject absolute paths and directory traversal in the file field."""
         p = Path(value)
-        if p.is_absolute():
+        # On Windows, Path("/etc/passwd").is_absolute() is False (no drive letter).
+        # Check via PurePosixPath to catch Unix-style absolute paths on all platforms.
+        if p.is_absolute() or str(value).startswith("/") or str(value).startswith("\\\\"):
             raise ValueError("file must be a relative path")
         if ".." in p.parts:
             raise ValueError("file must not contain '..' path traversal")
